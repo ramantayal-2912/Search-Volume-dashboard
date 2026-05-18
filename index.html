@@ -1310,6 +1310,7 @@
       <div class="num gold" id="kpi-total">—</div>
       <div class="delta" id="kpi-total-sub">—</div>
     </div>
+
     <div class="kpi">
       <div class="lbl">Avg Weekly Volume</div>
       <div class="num" id="kpi-avg">—</div>
@@ -1326,10 +1327,12 @@
       <div class="delta" id="kpi-wow-sub">—</div>
     </div>
     <div class="kpi">
-      <div class="lbl">Leading Channel</div>
-      <div class="num" id="kpi-lead">—</div>
-      <div class="delta" id="kpi-lead-sub">—</div>
+      <div class="lbl">Avg WoW Δ</div>
+      <div class="num" id="kpi-avg-wow">—</div>
+      <div class="delta" id="kpi-avg-wow-sub">—</div>
     </div>
+
+
   </section>
 
   <!-- Trend chart -->
@@ -1925,10 +1928,6 @@
       wowFrom = `W${wPrev} → W${wLast}`;
     }
 
-    // Leading channel
-    const byCh = {};
-    rows.forEach(r => byCh[r.ch] = (byCh[r.ch] || 0) + r.sv);
-    const leadEntry = Object.entries(byCh).sort((a,b) => b[1] - a[1])[0];
 
     document.getElementById('kpi-total').textContent = fmtInt(total);
     document.getElementById('kpi-total-sub').innerHTML = `<span style="color:var(--muted)">${fmtNumber(total)} searches across selection</span>`;
@@ -1952,15 +1951,34 @@
     }
     document.getElementById('kpi-wow-sub').innerHTML = `<span style="color:var(--muted)">${wowFrom}</span>`;
 
-    if (leadEntry) {
-      document.getElementById('kpi-lead').innerHTML = leadEntry[0];
-      document.getElementById('kpi-lead').style.color = COLOR[leadEntry[0]] || COLOR.text;
-      const share = (leadEntry[1] / total * 100).toFixed(1);
-      document.getElementById('kpi-lead-sub').innerHTML = `<span style="color:var(--muted)">${share}% of total · ${fmtInt(leadEntry[1])}</span>`;
+    // Avg WoW Δ — average WoW % change across all keywords (last 2 weeks)
+    if (presentWeeks.length >= 2) {
+      const wL = presentWeeks[presentWeeks.length - 1];
+      const wP = presentWeeks[presentWeeks.length - 2];
+      const kwMap = {};
+      rows.forEach(r => {
+        if (!kwMap[r.kw + '|' + r.ch]) kwMap[r.kw + '|' + r.ch] = {};
+        kwMap[r.kw + '|' + r.ch][r.wk] = (kwMap[r.kw + '|' + r.ch][r.wk] || 0) + r.sv;
+      });
+      const kwWows = [];
+      Object.values(kwMap).forEach(wkData => {
+        const svL = wkData[wL], svP = wkData[wP];
+        if (svL > 0 && svP > 0) kwWows.push((svL - svP) / svP * 100);
+      });
+      if (kwWows.length > 0) {
+        const avgWow = kwWows.reduce((a, b) => a + b, 0) / kwWows.length;
+        const col = avgWow >= 0 ? 'var(--green)' : 'var(--red)';
+        document.getElementById('kpi-avg-wow').innerHTML = `<span style="color:${col}">${avgWow >= 0 ? '▲' : '▼'} ${Math.abs(avgWow).toFixed(1)}%</span>`;
+        document.getElementById('kpi-avg-wow-sub').textContent = `avg across ${kwWows.length} keywords`;
+      } else {
+        document.getElementById('kpi-avg-wow').textContent = '—';
+        document.getElementById('kpi-avg-wow-sub').textContent = '';
+      }
     } else {
-      document.getElementById('kpi-lead').textContent = '—';
-      document.getElementById('kpi-lead-sub').textContent = '—';
+      document.getElementById('kpi-avg-wow').textContent = '—';
+      document.getElementById('kpi-avg-wow-sub').textContent = '';
     }
+
   }
 
   /* ─── Trend chart ─── */
@@ -3455,7 +3473,8 @@
       document.getElementById('kpi-avg').textContent = '0';
       document.getElementById('kpi-kws').textContent = '0';
       document.getElementById('kpi-wow').textContent = '—';
-      document.getElementById('kpi-lead').textContent = '—';
+      document.getElementById('kpi-avg-wow').textContent = '—';
+      document.getElementById('kpi-avg-wow-sub').textContent = '';
       document.getElementById('kw-table-body').innerHTML = '<tr><td colspan="8" class="empty">No data — relax a filter.</td></tr>';
       if (trendChart) { trendChart.destroy(); trendChart = null; }
       if (moversChart) { moversChart.destroy(); moversChart = null; }
