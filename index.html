@@ -1612,11 +1612,14 @@
 
   // Universe
   const ALL_CHANNELS = ['Amazon','Flipkart','Myntra','Blinkit'];
-  const ALL_BRANDS   = [...new Set(RAW.map(r => r.br))].sort();
   const ALL_KCS      = ['Branded','Generic','Competitor'];
-  const ALL_RANGES   = [...new Set(RAW.map(r => r.rg).filter(Boolean))].sort();
-  const ALL_CATS     = [...new Set(RAW.map(r => r.cg).filter(Boolean))].sort();
-  const WEEKS        = [...new Set(RAW.map(r => r.wk))].sort((a,b)=>a-b);
+  // Single pass to build all universe sets
+  const _uBrands = new Set(), _uRanges = new Set(), _uCats = new Set(), _uWeeks = new Set();
+  RAW.forEach(r => { _uBrands.add(r.br); if(r.rg) _uRanges.add(r.rg); if(r.cg) _uCats.add(r.cg); _uWeeks.add(r.wk); });
+  const ALL_BRANDS = [..._uBrands].sort();
+  const ALL_RANGES = [..._uRanges].sort();
+  const ALL_CATS   = [..._uCats].sort();
+  const WEEKS      = [..._uWeeks].sort((a,b)=>a-b);
 
   // State
   const state = {
@@ -1781,7 +1784,7 @@
           renderList();
           renderTrigger();
           renderChips();
-          update();
+          scheduleUpdate();
         });
       });
     }
@@ -1818,7 +1821,7 @@
           renderList();
           renderTrigger();
           renderChips();
-          update();
+          scheduleUpdate();
         });
       });
     }
@@ -1857,7 +1860,7 @@
       renderList();
       renderTrigger();
       renderChips();
-      update();
+      scheduleUpdate();
     });
 
     dd.querySelector('.ctxClear').addEventListener('click', () => {
@@ -1865,7 +1868,7 @@
       renderList();
       renderTrigger();
       renderChips();
-      update();
+      scheduleUpdate();
     });
 
     // Initial render
@@ -2413,7 +2416,9 @@
       if (arrow) arrow.textContent = isSorted ? (state.sort.dir === 'asc' ? '▲' : '▼') : '↕';
     });
 
-    const list = pool;
+    const TABLE_ROW_CAP = 150;
+    const totalRows = pool.length;
+    const list = pool.slice(0, TABLE_ROW_CAP);
     const tbody = document.getElementById('kw-table-body');
     const visW = visibleWeeks();
 
@@ -2458,6 +2463,10 @@
         </tr>
       `;
     }).join('');
+
+    if (totalRows > TABLE_ROW_CAP) {
+      tbody.innerHTML += `<tr><td colspan="9" style="text-align:center;padding:14px;color:var(--muted);font-family:var(--mono);font-size:11px;">Showing top ${TABLE_ROW_CAP} of ${totalRows.toLocaleString('en-IN')} keywords · refine filters to narrow</td></tr>`;
+    }
 
     // Wire row clicks
     tbody.querySelectorAll('tr[data-key]').forEach(tr => {
@@ -2514,7 +2523,7 @@
     }
     syncSlider();
     syncPresets();
-    update();
+    scheduleUpdate();
   }
 
   function syncSlider() {
@@ -2617,7 +2626,7 @@
       redrawRangeFill();
       updateReadout();
       syncPresets();
-      update();
+      scheduleUpdate();
     }
     function onMax() {
       let v = +maxEl.value;
@@ -2627,7 +2636,7 @@
       redrawRangeFill();
       updateReadout();
       syncPresets();
-      update();
+      scheduleUpdate();
     }
 
     minEl.addEventListener('input', onMin);
@@ -2820,7 +2829,7 @@
         renderProductList(document.getElementById('ddSearch').value);
         renderProductTrigger();
         renderProductChips();
-        update();
+        scheduleUpdate();
       });
     });
   }
@@ -2879,7 +2888,7 @@
         renderProductList(document.getElementById('ddSearch').value);
         renderProductTrigger();
         renderProductChips();
-        update();
+        scheduleUpdate();
       });
     });
 
@@ -2895,7 +2904,7 @@
         renderProductList(document.getElementById('ddSearch').value);
         renderProductTrigger();
         renderProductChips();
-        update();
+        scheduleUpdate();
       });
     }
   }
@@ -2939,7 +2948,7 @@
       renderProductList(search.value);
       renderProductTrigger();
       renderProductChips();
-      update();
+      scheduleUpdate();
     });
 
     document.getElementById('ddClear').addEventListener('click', () => {
@@ -2947,7 +2956,7 @@
       renderProductList(search.value);
       renderProductTrigger();
       renderProductChips();
-      update();
+      scheduleUpdate();
     });
 
     // Initial render
@@ -3020,7 +3029,7 @@
           renderList(search.value);
           renderTrigger();
           renderChips();
-          update();
+          scheduleUpdate();
         });
       });
     }
@@ -3077,7 +3086,7 @@
           renderList(search.value);
           renderTrigger();
           renderChips();
-          update();
+          scheduleUpdate();
         });
       });
 
@@ -3093,7 +3102,7 @@
           renderList(search.value);
           renderTrigger();
           renderChips();
-          update();
+          scheduleUpdate();
         });
       }
     }
@@ -3146,7 +3155,7 @@
       renderList(search.value);
       renderTrigger();
       renderChips();
-      update();
+      scheduleUpdate();
     });
 
     dd.querySelector('.kwClear').addEventListener('click', () => {
@@ -3154,7 +3163,7 @@
       renderList(search.value);
       renderTrigger();
       renderChips();
-      update();
+      scheduleUpdate();
     });
 
     // Initial render
@@ -3293,10 +3302,9 @@
   }
 
   /* ─── Keyword tracking summary table ─── */
-  function renderSummaryTable() {
-    // Respects all current filters (channel, brand, category, period, keyword
-    // selections, and product), exactly like every other panel.
-    const rows = filtered();
+  function renderSummaryTable(rows) {
+    // rows passed in from update() to avoid redundant filtered() calls
+    if (!rows) rows = filtered();
     const visW = visibleWeeks();
 
     const summaryEl = document.getElementById('summary-table');
@@ -3473,6 +3481,12 @@
   }
 
   /* ─── Master update ─── */
+  let _updateScheduled = false;
+  function scheduleUpdate() {
+    if (_updateScheduled) return;
+    _updateScheduled = true;
+    requestAnimationFrame(() => { _updateScheduled = false; update(); });
+  }
   function update() {
     // Sync keyword dropdowns to current context first, so any pruned selections
     // are removed before we run the data filter.
@@ -3487,8 +3501,11 @@
         const seen = {};
         raw.forEach(r => {
           const k = r.kw + '|' + r.ch + '|' + r.wk;
-          if (!seen[k]) seen[k] = { ...r };
-          else if (r.sv > seen[k].sv) seen[k].sv = r.sv; // keep max SV across products
+          if (!seen[k]) {
+            seen[k] = { ch:r.ch, kw:r.kw, br:r.br, kc:r.kc, wk:r.wk, mo:r.mo, sv:r.sv, rg:r.rg, cg:r.cg, pn:r.pn };
+          } else if (r.sv > seen[k].sv) {
+            seen[k].sv = r.sv;
+          }
         });
         return Object.values(seen);
       }
@@ -3507,8 +3524,8 @@
       if (moversChart) { moversChart.destroy(); moversChart = null; }
       if (catChart)   { catChart.destroy();   catChart   = null; }
       renderRawTable(rows);
-      renderSummaryTable();
-      renderBrandTrackingTable();
+      renderSummaryTable(rows);
+      renderBrandTrackingTable(rows);
       return;
     }
     renderKpis(rows);
@@ -3517,8 +3534,8 @@
     renderCatChart(rows);
     renderTable(rows);
     renderRawTable(rows);
-    renderSummaryTable();
-    renderBrandTrackingTable();
+    renderSummaryTable(rows);
+    renderBrandTrackingTable(rows);
   }
 
   // ─── Brand-wise keyword tracking table ───
@@ -3533,9 +3550,9 @@
   // Sort state for the brand summary table
   const brtSort = { col: 'sv', dir: 'desc' }; // col: 'brand'|'kw'|'sv'
 
-  function getBrandTrackingData() {
-    // Use filtered() so all dashboard filters apply
-    const rows = filtered();
+  function getBrandTrackingData(rows) {
+    // rows passed in from update() to avoid redundant filtered() calls
+    if (!rows) rows = rows;
     // Latest week within the current filtered range
     const presentWeeks = [...new Set(rows.map(r => r.wk))].sort((a,b)=>a-b);
     const latestWk = presentWeeks[presentWeeks.length - 1];
@@ -3549,8 +3566,8 @@
     return { brandMap, latestWk };
   }
 
-  function renderBrandTrackingTable() {
-    const { brandMap, latestWk } = getBrandTrackingData();
+  function renderBrandTrackingTable(rows) {
+    const { brandMap, latestWk } = getBrandTrackingData(rows);
     const fmt = n => n >= 1e7 ? (n/1e7).toFixed(1)+'Cr'
                    : n >= 1e5 ? (n/1e5).toFixed(1)+'L'
                    : n >= 1e3 ? (n/1e3).toFixed(1)+'K'
@@ -3772,7 +3789,7 @@
   wireDownload();
   syncSlider();
   syncPresets();
-  update();
+  scheduleUpdate();
   wireBrandTableSort();
   wireBrkwModalSort();
   // Redraw fill once layout has settled (font/CSS) — ensures correct positioning
