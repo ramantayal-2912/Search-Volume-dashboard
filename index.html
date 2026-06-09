@@ -1393,7 +1393,8 @@
           <th data-sort="kw">Keyword <span class="sortarrow">↕</span></th>
           <th data-sort="ch">Channel <span class="sortarrow">↕</span></th>
           <th data-sort="br">Brand <span class="sortarrow">↕</span></th>
-          <th data-sort="kc">Category <span class="sortarrow">↕</span></th>
+          <th data-sort="cat">Product Category <span class="sortarrow">↕</span></th>
+          <th data-sort="kc">Type <span class="sortarrow">↕</span></th>
           <th>Trend</th>
           <th data-sort="avg" class="sorted" style="text-align:right">Search Volume <span class="sortarrow">▼</span></th>
           <th data-sort="latest" style="text-align:right">Latest Week <span class="sortarrow">↕</span></th>
@@ -1413,6 +1414,10 @@
       </div>
       <div>
         <span class="raw-meta" id="raw-summary">— rows · — weeks</span>
+        <div class="raw-mode-toggle" id="rawModeToggle" style="display:inline-flex;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-right:10px;vertical-align:middle;">
+          <button type="button" class="raw-mode-btn active" data-mode="weekly" style="padding:7px 14px;background:var(--accent);color:#fff;border:none;font-family:var(--mono);font-size:11px;letter-spacing:0.05em;cursor:pointer;">WEEKLY</button>
+          <button type="button" class="raw-mode-btn" data-mode="monthly" style="padding:7px 14px;background:transparent;color:var(--muted);border:none;font-family:var(--mono);font-size:11px;letter-spacing:0.05em;cursor:pointer;">MONTHLY</button>
+        </div>
         <div class="dropdown raw-week-dd" id="rawWeekDd">
           <button class="dd-trigger raw-week-trig" id="rawWeekTrig" aria-haspopup="listbox" aria-expanded="false">
             <span class="dd-text" id="rawWeekText">All weeks</span>
@@ -1635,6 +1640,7 @@
     kwSelections: { Branded: new Set(), Generic: new Set(), Competitor: new Set() },
     sort: { col: 'avg', dir: 'desc' },
     rawWeeks: new Set(),                // empty = all weeks within global window
+    rawMode: 'weekly',                  // 'weekly' or 'monthly'
   };
 
   // Unique keywords per category (used by the keyword dropdowns)
@@ -2329,12 +2335,19 @@
     const agg = {};
     rows.forEach(r => {
       const k = r.kw + '|' + r.ch;
-      if (!agg[k]) agg[k] = { key: k, kw: r.kw, ch: r.ch, br: r.br, kc: r.kc, total: 0, byWeek: {} };
+      if (!agg[k]) agg[k] = { key: k, kw: r.kw, ch: r.ch, br: r.br, kc: r.kc, total: 0, byWeek: {}, _catCounts: {} };
       // Use max SV per week (keyword SV is repeated across products; max = true keyword SV)
       const prevWkSV = agg[k].byWeek[r.wk] || 0;
       const newWkSV = Math.max(prevWkSV, r.sv);
       agg[k].total += (newWkSV - prevWkSV); // only add the delta
       agg[k].byWeek[r.wk] = newWkSV;
+      // Track product category frequency to pick the dominant one
+      if (r.cg) agg[k]._catCounts[r.cg] = (agg[k]._catCounts[r.cg] || 0) + 1;
+    });
+    // Resolve dominant category per keyword
+    Object.values(agg).forEach(a => {
+      const entries = Object.entries(a._catCounts);
+      a.cat = entries.length ? entries.sort((x,y)=>y[1]-x[1])[0][0] : '—';
     });
     KW_AGG = agg; // expose for modal lookup
 
@@ -2398,6 +2411,7 @@
       kw:    (a,b) => a.kw.localeCompare(b.kw),
       ch:    (a,b) => a.ch.localeCompare(b.ch) || (b._avg - a._avg),
       br:    (a,b) => a.br.localeCompare(b.br) || (b._avg - a._avg),
+      cat:   (a,b) => (a.cat||'').localeCompare(b.cat||'') || (b._avg - a._avg),
       kc:    (a,b) => a.kc.localeCompare(b.kc) || (b._avg - a._avg),
       avg:   (a,b) => a._avg - b._avg,
       latest:(a,b) => a._latestSV - b._latestSV,
@@ -2423,7 +2437,7 @@
     const visW = visibleWeeks();
 
     if (list.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" class="empty">No keywords match the current filter.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" class="empty">No keywords match the current filter.</td></tr>';
       return;
     }
 
@@ -2450,6 +2464,7 @@
           <td class="kw">${escapeHtml(row.kw)}</td>
           <td><span class="badge ${row.ch.toLowerCase()}">${row.ch}</span></td>
           <td style="color:var(--text-dim)">${row.br}</td>
+          <td style="color:var(--text-dim)">${escapeHtml(row.cat || '—')}</td>
           <td><span class="badge ${row.kc.toLowerCase()}">${row.kc}</span></td>
           <td class="spark-cell">${makeSpark(series, COLOR[row.ch])}</td>
           <td class="sv">
@@ -2465,7 +2480,7 @@
     }).join('');
 
     if (totalRows > TABLE_ROW_CAP) {
-      tbody.innerHTML += `<tr><td colspan="9" style="text-align:center;padding:14px;color:var(--muted);font-family:var(--mono);font-size:11px;">Showing top ${TABLE_ROW_CAP} of ${totalRows.toLocaleString('en-IN')} keywords · refine filters to narrow</td></tr>`;
+      tbody.innerHTML += `<tr><td colspan="10" style="text-align:center;padding:14px;color:var(--muted);font-family:var(--mono);font-size:11px;">Showing top ${TABLE_ROW_CAP} of ${totalRows.toLocaleString('en-IN')} keywords · refine filters to narrow</td></tr>`;
     }
 
     // Wire row clicks
@@ -3196,29 +3211,70 @@
 
   /* ─── Raw weekly volume pivot table ─── */
   function renderRawTable(rows) {
-    const globalVisW = visibleWeeks();
-    // Local week filter narrows further (empty = all global-visible weeks)
+    // Week dropdown shows ALL weeks in the dataset (not limited by global slider)
+    const allWeeks = WEEKS.slice();
+    // Selected weeks (empty = all weeks)
     const visW = state.rawWeeks.size === 0
-      ? globalVisW
-      : globalVisW.filter(w => state.rawWeeks.has(w));
+      ? allWeeks
+      : allWeeks.filter(w => state.rawWeeks.has(w));
 
-    // Refresh the local week dropdown to reflect the current global window
-    rebuildRawWeekDropdown(globalVisW);
+    // Refresh the local week dropdown to reflect ALL weeks
+    rebuildRawWeekDropdown(allWeeks);
 
-    // Aggregate by keyword × channel
+    // Aggregate by keyword × channel, taking MAX SV per week (dedup product rows)
     const agg = {};
     rows.forEach(r => {
       const k = r.kw + '|' + r.ch;
-      if (!agg[k]) agg[k] = { kw: r.kw, ch: r.ch, br: r.br, kc: r.kc, byWeek: {}, total: 0 };
-      agg[k].byWeek[r.wk] = (agg[k].byWeek[r.wk] || 0) + r.sv;
-      agg[k].total += r.sv;
+      if (!agg[k]) agg[k] = { kw: r.kw, ch: r.ch, br: r.br, kc: r.kc, byWeek: {} };
+      const prev = agg[k].byWeek[r.wk] || 0;
+      if (r.sv > prev) agg[k].byWeek[r.wk] = r.sv;
     });
-    const list = Object.values(agg).sort((a, b) => b.total - a.total);
 
-    RAW_PIVOT = { list, visW };
+    const isMonthly = state.rawMode === 'monthly';
+
+    // Build column list — weeks or months
+    let cols; // [{key, label, sub, weeks:[...]}]
+    if (isMonthly) {
+      // Group visible weeks by month, preserving chronological order
+      const monthOrder = [];
+      const monthWeeks = {};
+      visW.forEach(w => {
+        const m = WEEK_MONTH[w] || '?';
+        if (!monthWeeks[m]) { monthWeeks[m] = []; monthOrder.push(m); }
+        monthWeeks[m].push(w);
+      });
+      cols = monthOrder.map(m => ({ key: m, label: m, sub: `${monthWeeks[m].length} wks`, weeks: monthWeeks[m] }));
+    } else {
+      cols = visW.map(w => ({ key: w, label: 'W' + w, sub: WEEK_DATE[w] || WEEK_MONTH[w], weeks: [w] }));
+    }
+
+    // Compute value per column for each row
+    const computeCol = (row, col) => {
+      const vals = col.weeks.map(w => row.byWeek[w]).filter(v => v !== undefined && v !== null);
+      if (vals.length === 0) return 0;
+      if (isMonthly) {
+        // Monthly = average of that month's weeks
+        return Math.round(vals.reduce((a,b)=>a+b,0) / vals.length);
+      }
+      return vals[0];
+    };
+
+    // Total = average across all visible weeks (so weekly & monthly are comparable)
+    const computeTotal = (row) => {
+      const vals = visW.map(w => row.byWeek[w]).filter(v => v !== undefined && v !== null && v > 0);
+      if (vals.length === 0) return 0;
+      return Math.round(vals.reduce((a,b)=>a+b,0) / vals.length);
+    };
+
+    const list = Object.values(agg)
+      .map(row => ({ ...row, _total: computeTotal(row) }))
+      .sort((a, b) => b._total - a._total);
+
+    RAW_PIVOT = { list, visW, cols, isMonthly, computeCol };
 
     const summary = document.getElementById('raw-summary');
-    summary.textContent = `${list.length} keyword${list.length === 1 ? '' : 's'} · ${visW.length} week${visW.length === 1 ? '' : 's'}`;
+    const unitLabel = isMonthly ? `${cols.length} month${cols.length===1?'':'s'}` : `${visW.length} week${visW.length===1?'':'s'}`;
+    summary.textContent = `${list.length} keyword${list.length === 1 ? '' : 's'} · ${unitLabel}`;
 
     const dlBtn = document.getElementById('download-csv');
     dlBtn.disabled = list.length === 0;
@@ -3229,13 +3285,14 @@
       return;
     }
 
+    const totalLabel = isMonthly ? 'Avg' : 'Avg';
     const headerCells = [
       '<th class="kw-h">Keyword</th>',
       '<th>Channel</th>',
       '<th>Brand</th>',
       '<th>Category</th>',
-      ...visW.map(w => `<th>W${w}<span class="week-sub">${WEEK_MONTH[w]}</span></th>`),
-      '<th class="tot-h">Total</th>'
+      ...cols.map(c => `<th>${c.label}<span class="week-sub">${c.sub}</span></th>`),
+      `<th class="tot-h">${totalLabel}</th>`
     ].join('');
 
     const bodyHtml = list.map(row => {
@@ -3244,11 +3301,11 @@
         `<td>${row.ch}</td>`,
         `<td>${escapeHtml(row.br)}</td>`,
         `<td>${row.kc}</td>`,
-        ...visW.map(w => {
-          const v = row.byWeek[w] || 0;
+        ...cols.map(c => {
+          const v = computeCol(row, c);
           return v === 0 ? '<td class="zero">—</td>' : `<td>${fmtNumber(v)}</td>`;
         }),
-        `<td class="tot-c">${fmtNumber(row.total)}</td>`
+        `<td class="tot-c">${fmtNumber(row._total)}</td>`
       ].join('');
       return '<tr>' + cells + '</tr>';
     }).join('');
@@ -3414,7 +3471,7 @@
 
   /* ─── CSV download ─── */
   function downloadCsv() {
-    const { list, visW } = RAW_PIVOT;
+    const { list, cols, isMonthly, computeCol } = RAW_PIVOT;
     if (!list.length) return;
 
     const escapeCsv = (v) => {
@@ -3423,14 +3480,16 @@
       return s;
     };
 
-    const headers = ['Keyword', 'Channel', 'Brand', 'Category', ...visW.map(w => `W${w} (${WEEK_MONTH[w]})`), 'Total'];
+    const colHeaders = cols.map(c => isMonthly ? `${c.label} (avg)` : `${c.label} (${c.sub})`);
+    const totalHeader = 'Average';
+    const headers = ['Keyword', 'Channel', 'Brand', 'Category', ...colHeaders, totalHeader];
     const lines = [headers.map(escapeCsv).join(',')];
 
     list.forEach(row => {
       const line = [
         row.kw, row.ch, row.br, row.kc,
-        ...visW.map(w => row.byWeek[w] || 0),
-        row.total
+        ...cols.map(c => computeCol(row, c)),
+        row._total
       ].map(escapeCsv).join(',');
       lines.push(line);
     });
@@ -3452,6 +3511,23 @@
 
   function wireDownload() {
     document.getElementById('download-csv').addEventListener('click', downloadCsv);
+  }
+
+  function wireRawModeToggle() {
+    const toggle = document.getElementById('rawModeToggle');
+    if (!toggle) return;
+    toggle.querySelectorAll('.raw-mode-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.rawMode = btn.dataset.mode;
+        toggle.querySelectorAll('.raw-mode-btn').forEach(b => {
+          const on = b.dataset.mode === state.rawMode;
+          b.classList.toggle('active', on);
+          b.style.background = on ? 'var(--accent)' : 'transparent';
+          b.style.color = on ? '#fff' : 'var(--muted)';
+        });
+        renderRawTable(filtered());
+      });
+    });
   }
 
   function wireRawWeekDropdown() {
@@ -3796,6 +3872,7 @@
   wireProductFilter();
   wireKeywordDropdowns();
   wireDropdownGlobals();
+  wireRawModeToggle();
   wireRawWeekDropdown();
   wireSort();
   wireDownload();
