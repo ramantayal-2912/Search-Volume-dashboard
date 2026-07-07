@@ -2134,15 +2134,14 @@
       return;
     }
 
-    // Filter: meaningful % change requires a non-trivial prior-week volume
-    // (otherwise tiny keywords like 5 → 50 dominate the chart with 900% noise)
-    const PCT_FLOOR_PREV_SV = 100;
-    const ranked = changes.filter(c => c.pct !== null && c.from >= PCT_FLOOR_PREV_SV);
+    // Rank by absolute volume change (not %) — this naturally keeps low-base
+    // keywords (e.g. 2 → 9 searches = "+339%") from dominating the chart.
+    const ranked = changes;
 
-    // Top 5 gainers by % desc, bottom 5 decliners by % asc
-    const gainers = ranked.filter(c => c.pct > 0).sort((a,b) => b.pct - a.pct).slice(0, 5);
-    const decliners = ranked.filter(c => c.pct < 0).sort((a,b) => a.pct - b.pct).slice(0, 5).reverse();
-    // Combined: gainers (largest % at top), decliners (most negative at bottom)
+    // Top 5 gainers by absolute change desc, bottom 5 decliners by absolute change asc
+    const gainers = ranked.filter(c => c.diff > 0).sort((a,b) => b.diff - a.diff).slice(0, 5);
+    const decliners = ranked.filter(c => c.diff < 0).sort((a,b) => a.diff - b.diff).slice(0, 5).reverse();
+    // Combined: gainers (largest absolute gain at top), decliners (largest absolute drop at bottom)
     const combined = [...gainers, ...decliners];
     if (combined.length === 0) {
       if (moversChart) { moversChart.destroy(); moversChart = null; }
@@ -2152,8 +2151,8 @@
     // Truncate keyword for display
     const truncate = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s;
     const labels = combined.map(c => truncate(c.kw, 32));
-    const data = combined.map(c => c.pct);
-    const colors = combined.map(c => c.pct >= 0 ? css.getPropertyValue('--pos').trim() : css.getPropertyValue('--neg').trim());
+    const data = combined.map(c => c.diff);
+    const colors = combined.map(c => c.diff >= 0 ? css.getPropertyValue('--pos').trim() : css.getPropertyValue('--neg').trim());
 
     if (moversChart) moversChart.destroy();
     // Inline plugin: render the % value at the end of each bar.
@@ -2175,8 +2174,10 @@
         meta.data.forEach((bar, i) => {
           const v = data[i];
           if (v === null || v === undefined || isNaN(v)) return;
-          const sign = v >= 0 ? '+' : '';
-          const text = sign + v.toFixed(0) + '%';
+          const sign = v >= 0 ? '+' : '−';
+          const pct = combined[i].pct;
+          const pctStr = (pct === null || pct === undefined) ? '' : `  (${pct >= 0 ? '+' : ''}${pct.toFixed(0)}%)`;
+          const text = sign + fmtNumber(Math.abs(v)) + pctStr;
           const isPos = v >= 0;
           ctx.fillStyle = isPos ? css.getPropertyValue('--pos').trim() : css.getPropertyValue('--neg').trim();
           const x = isPos ? bar.x + 6 : zeroX + 6;
@@ -2252,7 +2253,7 @@
             ticks: {
               color: COLOR.muted,
               font: { family: '"JetBrains Mono", monospace', size: 10 },
-              callback: v => (v >= 0 ? '+' : '') + v.toFixed(0) + '%'
+              callback: v => (v >= 0 ? '+' : '') + fmtNumber(v)
             }
           },
           y: {
